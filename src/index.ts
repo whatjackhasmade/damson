@@ -5,7 +5,7 @@ const endpoint = `${productUrl}.js`;
 
 const VARIANT_ID = 55927792337283;
 
-const ProductSchema = z.object({
+const productSchema = z.object({
   variants: z.array(
     z.object({
       id: z.number(),
@@ -53,9 +53,9 @@ async function checkStock() {
     throw new Error(`HTTP ${response.status}`);
   }
 
-  const product = ProductSchema.parse(await response.json());
+  const product = productSchema.parse(await response.json());
 
-  const variant = product.variants.find(v => v.id === VARIANT_ID);
+  const variant = product.variants.find(variant => variant.id === VARIANT_ID);
 
   if (!variant) {
     throw new Error("Variant not found");
