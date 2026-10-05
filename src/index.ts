@@ -5,6 +5,14 @@ const endpoint = `${productUrl}.js`;
 
 const VARIANT_ID = 55927792337283;
 
+const secondMS = 1000;
+
+const checkIntervalMS = 60 * secondMS;
+const maxBackoffMS = 10 * 60 * secondMS;
+const jitterMS = 10 * secondMS;
+const requestTimeoutMS = 10 * secondMS;
+const maxConsecutiveFailures = 10;
+
 const productSchema = z.object({
   variants: z.array(
     z.object({
@@ -22,20 +30,39 @@ if (!NTFY_TOPIC) {
   process.exit(1);
 }
 
-async function notify(title: string, message: string) {
+// Errors that retrying won't fix, e.g. a misconfigured variant ID
+class FatalError extends Error {}
+
+async function notify(
+  title: string,
+  message: string,
+  { priority = "urgent", tags = "tada" } = {}
+) {
   const response = await fetch(`https://ntfy.sh/${NTFY_TOPIC}`, {
     method: "POST",
     body: message,
     headers: {
       Title: title,
-      Priority: "urgent",
-      Tags: "tada",
+      Priority: priority,
+      Tags: tags,
       Click: productUrl,
     },
+    signal: AbortSignal.timeout(requestTimeoutMS),
   });
 
   if (!response.ok) {
     throw new Error(`ntfy HTTP ${response.status}`);
+  }
+}
+
+async function notifyBroken(reason: string) {
+  try {
+    await notify("Stock checker stopped", reason, {
+      priority: "high",
+      tags: "warning",
+    });
+  } catch (error) {
+    console.error("Failed to send failure notification:", error);
   }
 }
 
@@ -47,6 +74,7 @@ async function checkStock() {
       Accept: "application/json",
     },
     cache: "no-store",
+    signal: AbortSignal.timeout(requestTimeoutMS),
   });
 
   if (!response.ok) {
@@ -58,7 +86,7 @@ async function checkStock() {
   const variant = product.variants.find(variant => variant.id === VARIANT_ID);
 
   if (!variant) {
-    throw new Error("Variant not found");
+    throw new FatalError(`Variant ${VARIANT_ID} not found on ${productUrl}`);
   }
 
   console.log(
@@ -70,7 +98,19 @@ async function checkStock() {
   return { available: variant.available, title: variant.public_title };
 }
 
+// Doubles the interval for each consecutive failure, capped, plus random jitter
+function nextDelay(consecutiveFailures: number) {
+  const base = Math.min(
+    checkIntervalMS * 2 ** consecutiveFailures,
+    maxBackoffMS
+  );
+
+  return base + Math.random() * jitterMS;
+}
+
 async function main() {
+  let consecutiveFailures = 0;
+
   while (true) {
     try {
       const { available, title } = await checkStock();
@@ -80,12 +120,29 @@ async function main() {
         await notify("Back in stock!", `Liu Raincoat ${title} is available`);
         return;
       }
+
+      consecutiveFailures = 0;
     } catch (error) {
       console.error("Check failed:", error);
+
+      if (error instanceof FatalError) {
+        await notifyBroken(error.message);
+        process.exit(1);
+      }
+
+      consecutiveFailures++;
+
+      if (consecutiveFailures >= maxConsecutiveFailures) {
+        await notifyBroken(
+          `${consecutiveFailures} consecutive failures. Last error: ${error}`
+        );
+        process.exit(1);
+      }
     }
 
-    // Check every 60 seconds
-    await new Promise(resolve => setTimeout(resolve, 60_000));
+    await new Promise(resolve =>
+      setTimeout(resolve, nextDelay(consecutiveFailures))
+    );
   }
 }
 
