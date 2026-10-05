@@ -1,7 +1,19 @@
+import { z } from "zod";
+
 const productUrl = "https://damsonmadder.com/products/liu-raincoat-navy-check";
 const endpoint = `${productUrl}.js`;
 
 const VARIANT_ID = 55927792337283;
+
+const ProductSchema = z.object({
+  variants: z.array(
+    z.object({
+      id: z.number(),
+      public_title: z.string(),
+      available: z.boolean(),
+    })
+  ),
+});
 
 const NTFY_TOPIC = process.env.NTFY_TOPIC;
 
@@ -41,11 +53,9 @@ async function checkStock() {
     throw new Error(`HTTP ${response.status}`);
   }
 
-  const product = await response.json();
+  const product = ProductSchema.parse(await response.json());
 
-  const variant = product.variants.find(
-    (v: { id: number }) => v.id === VARIANT_ID
-  );
+  const variant = product.variants.find(v => v.id === VARIANT_ID);
 
   if (!variant) {
     throw new Error("Variant not found");
@@ -57,7 +67,7 @@ async function checkStock() {
     variant.available ? "🟢 IN STOCK" : "🔴 OUT OF STOCK"
   );
 
-  return { available: variant.available as boolean, title: variant.public_title as string };
+  return { available: variant.available, title: variant.public_title };
 }
 
 async function main() {
