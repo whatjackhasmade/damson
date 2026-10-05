@@ -71,19 +71,15 @@ async function checkStock() {
 }
 
 async function main() {
-  let wasInStock = false;
-
   while (true) {
     try {
       const { available, title } = await checkStock();
 
-      // Alert on every out → in transition, so quick sell-out/restock cycles aren't missed
-      if (available && !wasInStock) {
+      if (available) {
         console.log("🎉 IT'S BACK IN STOCK!");
         await notify("Back in stock!", `Liu Raincoat ${title} is available`);
+        return;
       }
-
-      wasInStock = available;
     } catch (error) {
       console.error("Check failed:", error);
     }
